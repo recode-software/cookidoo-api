@@ -1,6 +1,6 @@
 {
   "name": "@recode-software/cookidoo-api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript client for the Cookidoo custom-recipes API (Thermomix). Auth, CRUD, typed MODE/INGREDIENT annotation builders, and a Polish step-text parser.",
   "keywords": [
     "cookidoo",
