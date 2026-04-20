@@ -1,0 +1,68 @@
+{
+  "name": "@recode-software/cookidoo-api",
+  "version": "0.1.0",
+  "description": "TypeScript client for the Cookidoo custom-recipes API (Thermomix). Auth, CRUD, typed MODE/INGREDIENT annotation builders, and a Polish step-text parser.",
+  "keywords": [
+    "cookidoo",
+    "thermomix",
+    "tm7",
+    "tm6",
+    "vorwerk",
+    "recipe",
+    "api",
+    "client"
+  ],
+  "author": "Recode Software",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/recode-software/cookidoo-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/recode-software/cookidoo-api/issues"
+  },
+  "homepage": "https://github.com/recode-software/cookidoo-api#readme",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./builders": {
+      "types": "./dist/builders/index.d.ts",
+      "import": "./dist/builders/index.js"
+    },
+    "./parser": {
+      "types": "./dist/parser/index.d.ts",
+      "import": "./dist/parser/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:all": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
