@@ -1,7 +1,10 @@
 import { CookidooAuthError } from "./errors.js";
 
+const CLIENT_ID = "kupferwerk-client-nwot";
+const CLIENT_SECRET = "Ls50ON1woySqs1dCdJge";
 const BASIC_AUTH =
-  "Basic " + Buffer.from("kupferwerk-client-nwot:").toString("base64");
+  "Basic " +
+  Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
 
 export interface TokenSet {
   accessToken: string;
