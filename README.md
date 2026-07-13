@@ -2,9 +2,9 @@
 
 Unofficial TypeScript client for the Cookidoo **custom recipes API**
 ("Utworzone przepisy" / "Created recipes"). Build Thermomix-actionable
-recipes programmatically: copy a public recipe into your account, then PATCH
-it with structured `MODE` buttons and `INGREDIENT` chips that render natively
-on TM7 / TM6.
+recipes programmatically: create (or copy) a recipe in your account, then PATCH
+it with tappable `TTS` (time/temp/speed) buttons and `INGREDIENT` chips that
+render natively on TM7 / TM6.
 
 This is a ground-up rewrite in TypeScript — not a port of
 [miaucl/cookidoo-api](https://github.com/miaucl/cookidoo-api). It fixes the
@@ -27,20 +27,17 @@ Requires **Node 20+** (uses global `fetch`).
 ## Quick start
 
 ```ts
-import { CookidooClient, parseStep, mode, ingredient, step } from "@recode-software/cookidoo-api";
+import { CookidooClient, parseStep, tts, ingredient, step } from "@recode-software/cookidoo-api";
 
 const client = new CookidooClient({
   email: process.env.COOKIDOO_EMAIL!,
   password: process.env.COOKIDOO_PASSWORD!,
-  country: "pl",    // tmmobile subdomain
+  country: "pl",    // host = https://cookidoo.pl
   language: "pl",   // URL path segment
 });
 
-// 1. Copy a public recipe into your account
-const recipe = await client.recipes.copyFromPublic({
-  publicId: "01KB04WSJP4SHNBKJK4H4FT0PZ",
-  servingSize: 1,
-});
+// 1. Create a new blank recipe (or copyFromPublic an existing one)
+const recipe = await client.recipes.create("T1 D1 Śniadanie · Gofry cynamonowe");
 
 // 2. PATCH meta (name, ingredients, yield, times)
 await client.recipes.patchMeta(recipe.recipeId, {
@@ -54,8 +51,8 @@ await client.recipes.patchMeta(recipe.recipeId, {
   totalTime: 1800,
 });
 
-// 3. PATCH instructions with MODE + INGREDIENT annotations.
-//    `parseStep` autodetects "praż", "Varoma", "obr. X", "wsteczne" …
+// 3. PATCH instructions with TTS + INGREDIENT annotations.
+//    `parseStep` autodetects "5 min/120°C/obr. 1", "obr. wsteczne", "Varoma" …
 const stepA = parseStep(
   "Do naczynia włóż jabłko, praż 10 min/100°C/obr. 1. Przełóż.",
   [{ display: "50 g jabłka", stem: "jabłk", amount: 50, unit: "g" }],
@@ -63,7 +60,7 @@ const stepA = parseStep(
 
 // Build a step manually if the parser doesn't recognize your phrasing
 const stepB = step("Ubij 3 min/obr. 3,5.", [
-  mode.manual({ offset: 5, length: 14, time: 180, speed: "3.5" }),
+  tts({ offset: 5, length: 14, time: 180, speed: "3.5" }),
 ]);
 
 await client.recipes.patchInstructions(recipe.recipeId, [stepA, stepB]);
@@ -79,11 +76,16 @@ await client.recipes.patchInstructions(recipe.recipeId, [stepA, stepB]);
 | `password` | `string`              | —                                                   |
 | `country`  | `string`              | —                                                   |
 | `language` | `string`              | `country`                                           |
-| `baseUrl`  | `string`              | `https://{country}.tmmobile.vorwerk-digital.com`    |
+| `baseUrl`  | `string`              | `https://cookidoo.{country}`                        |
 | `fetch`    | typeof `fetch`        | global `fetch` (lets you inject for tests)          |
 
-The client performs OAuth2 password grant lazily on first API call, caches
-`access_token` + `refresh_token`, and refreshes once on a 401 response.
+The client logs in lazily on first API call via the **browser OAuth2/PKCE
+flow** (GET login page → POST credentials to the CIAM login service), then
+authenticates every request with the session cookies (`_oauth2_proxy`,
+`v-authenticated`) held in an internal jar — there is no bearer token to
+manage. On a `401` it re-authenticates once and retries. Some markets use a
+multi-label TLD (e.g. UK → `cookidoo.co.uk`); pass `baseUrl` to override host
+derivation.
 
 ### `client.recipes`
 
@@ -91,6 +93,7 @@ The client performs OAuth2 password grant lazily on first API call, caches
 |--------------------------------|-----------------------------------------------|
 | `list()`                       | List your custom recipes                      |
 | `get(id)`                      | Fetch a recipe (full view, with annotations)  |
+| `create(name)`                 | Create a new blank recipe (no rate limit)     |
 | `copyFromPublic({publicId, servingSize?, retry?})` | Copy a public recipe into your account |
 | `patchMeta(id, meta)`          | Update name / ingredients / yield / times     |
 | `patchInstructions(id, steps)` | Replace `instructions[]` with new `Step[]`    |
@@ -101,20 +104,17 @@ request triggers `validationError`. This matches what the web UI does.
 
 ### Builders (`@recode-software/cookidoo-api/builders`)
 
-Type-safe constructors for MODE / INGREDIENT annotations. Each takes the
-`{offset, length}` of the substring in the step text to pin the chip/button.
+Type-safe constructors for annotations. Each takes the `{offset, length}` of
+the substring in the step text to pin the chip/button.
 
 ```ts
-import { mode, ingredient, step } from "@recode-software/cookidoo-api/builders";
+import { tts, ingredient, step } from "@recode-software/cookidoo-api/builders";
 
-mode.manual({ offset, length, time: 20, speed: "5" });            // ⚠ unsupported on custom recipes
-mode.browning({ offset, length, time: 600, temperature: 140 });   // 140|145|150|155|160
-mode.blend({ offset, length, time: 30, speed: "7" });             // 6|6.5|7|7.5|8
-mode.steaming({ offset, length, time: 900, speed: "1" });         // accessory: Varoma (no temperature field)
-mode.warmUp({ offset, length, temperature: 70, speed: "1" });     // soft|1|2
-mode.turbo({ offset, length, time: 2, pulseCount: 1 });
-mode.dough({ offset, length, time: 120 });
-mode.riceCooker({ offset, length });
+// TTS — the tappable time/temperature/speed button. This is the correct
+// encoding for a generic "5 min/120°C/obr. 1" operation.
+tts({ offset, length, time: 300, temperature: 120, speed: "1" });
+tts({ offset, length, time: 7, speed: "5" });                       // no temperature
+tts({ offset, length, time: 10, speed: "1", direction: "CCW" });    // obr. wsteczne (reverse)
 
 ingredient.simple({ offset, length, description: "50 g jabłka" });
 ingredient.structured({
@@ -124,15 +124,26 @@ ingredient.structured({
 });
 ```
 
+`direction` is emitted only for reverse rotation (`"CCW"`); clockwise omits it.
+`temperature` is omitted when not provided.
+
+> **Deprecated: `mode.*` / `MODE` annotations.** The `mode` builder and
+> `findModeAnnotations` are still exported for callers targeting the concrete
+> named modes, but the generic `MODE`/`name:"manual"` encoding renders
+> struck-through and untappable on custom recipes. Prefer `tts` /
+> `findTtsAnnotations` (the default in `parseStep`).
+
 ### Parser (`@recode-software/cookidoo-api/parser`)
 
-Polish step-text parser (the only verified grammar). Detects:
+Polish step-text parser (the only verified grammar). `parseStep` emits `TTS`
+operation buttons + `INGREDIENT` chips. Detects:
 
-- `N min/M°C/obr. X` → `MODE manual` with temperature
-- `N min/Varoma/obr. X` → `MODE steaming`
-- `praż N min/M°C/obr. X` → `MODE browning` (temperature clamped to 140–160 °C)
-- `N min/obr. X` → `MODE manual` (no temperature)
-- `wsteczne` suffix → `direction: "CCW"`
+- `N min/M°C/obr. X` → `TTS` with temperature
+- `N min/obr. X` → `TTS` (no temperature)
+- `N min M s/…` → `TTS` with compound duration summed to seconds
+- `N min/Varoma/obr. X` → `TTS` (Varoma matched; no `temperature` field emitted)
+- `obr. wsteczne X` → `direction: "CCW"`
+- ranges (`4–6 min`) collapse to the first number
 - ingredient stems in the step → `INGREDIENT` with nested `VOLUME` annotation
 
 ```ts
@@ -204,16 +215,15 @@ await client.recipes.copyFromPublic({ publicId, retry: false });
 
 ## Known quirks
 
-- **`name: "manual"` is silently unsupported on custom recipes.** The API
-  saves it, but the Cookidoo web/TM7 UI renders the chip struck-through with
-  `unsupported=true`. `parseStep` / `findModeAnnotations` therefore skip
-  `manual`-producing patterns by default (use `{ emitManual: true }` only if
-  you're generating data for a non-custom-recipe context). For step text
-  like `20 s/obr. 5` that has no specific Tryb, leave it as plain text —
-  users will type the values on the machine.
-- **`steaming` has NO `temperature` field.** Only `time`, `speed`,
-  `direction`, and `accessory`. Sending `temperature` returns
-  `400 validationError`. The builder and parser both reflect this.
+- **Use `TTS`, not `MODE`/`manual`, for generic operations.** A `MODE`
+  annotation with `name: "manual"` is saved but rendered struck-through and
+  untappable on custom recipes; the correct encoding for a plain
+  "time/temp/speed" run is a `TTS` annotation (verified against a live
+  account). `parseStep` emits `TTS` by default.
+- **Varoma via `TTS` carries no `temperature`.** `parseStep` matches a
+  `Varoma` step so the time/speed button still renders, but does not emit a
+  `temperature` field (the exact Varoma-on-custom-recipe encoding is
+  unverified). Steaming as a dedicated mode is out of scope.
 - **Custom Lists and custom recipes don't mix.** `POST /organize/{lang}/api/custom-list/{id}`
   returns a fake `200 OK` when you try to add a custom recipe — the list
   stays empty. Use name prefixing (`T1 D1 Śniadanie · …`) or attach to the
@@ -238,7 +248,7 @@ try {
   if (err instanceof CookidooRateLimitError) {
     // 429 — copy endpoint throttled
   } else if (err instanceof CookidooAuthError) {
-    // 401 on token endpoint
+    // login failed — bad credentials or auth cookies not set
   } else if (err instanceof CookidooError) {
     console.error(err.status, err.body);
   }
