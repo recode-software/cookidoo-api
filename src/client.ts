@@ -1,4 +1,6 @@
-import { loginWithPassword, refreshToken, type TokenSet } from "./auth.js";
+import makeFetchCookie from "fetch-cookie";
+import { CookieJar } from "tough-cookie";
+import { browserLogin } from "./auth.js";
 import { CookidooError, CookidooRateLimitError } from "./errors.js";
 import { RecipesApi } from "./recipes.js";
 import type { CountryCode, LanguageCode } from "./types.js";
@@ -9,6 +11,11 @@ export const FULL_VIEW_ACCEPT =
 export interface CookidooClientOptions {
   email: string;
   password: string;
+  /**
+   * Country/TLD segment of the Cookidoo host, e.g. `pl` → `https://cookidoo.pl`.
+   * Note some markets use multi-label TLDs (e.g. `co.uk`); pass `baseUrl`
+   * directly to override host derivation.
+   */
   country: CountryCode;
   language?: LanguageCode;
   baseUrl?: string;
@@ -32,83 +39,73 @@ export class CookidooClient {
 
   private readonly email: string;
   private readonly password: string;
+  private readonly jar: CookieJar;
   private readonly fetchImpl: typeof fetch;
-  private tokens: TokenSet | null = null;
-  private loginInFlight: Promise<TokenSet> | null = null;
+  private loggedIn = false;
+  private loginInFlight: Promise<void> | null = null;
 
   constructor(opts: CookidooClientOptions) {
     this.country = opts.country;
     this.language = opts.language ?? opts.country;
-    this.baseUrl =
-      opts.baseUrl ?? `https://${opts.country}.tmmobile.vorwerk-digital.com`;
+    this.baseUrl = opts.baseUrl ?? `https://cookidoo.${opts.country}`;
     this.email = opts.email;
     this.password = opts.password;
-    this.fetchImpl = opts.fetch ?? fetch;
+    this.jar = new CookieJar();
+    // Wrap the base fetch so the cookie jar is applied on every request and
+    // populated across the OAuth redirect chain.
+    this.fetchImpl = makeFetchCookie(
+      opts.fetch ?? fetch,
+      this.jar,
+    ) as unknown as typeof fetch;
     this.recipes = new RecipesApi(this);
   }
 
   async login(): Promise<void> {
-    await this.ensureToken();
+    await this.ensureLogin();
   }
 
-  setTokens(tokens: TokenSet): void {
-    this.tokens = tokens;
-  }
-
-  getTokens(): TokenSet | null {
-    return this.tokens;
+  isLoggedIn(): boolean {
+    return this.loggedIn;
   }
 
   async request<T = unknown>(opts: RequestOptions): Promise<T> {
-    const token = await this.ensureToken();
-    const res = await this.performRequest(opts, token.accessToken);
+    await this.ensureLogin();
+    let res = await this.performRequest(opts);
 
-    if (res.status === 401 && this.tokens) {
-      try {
-        const refreshed = await refreshToken(
-          this.baseUrl,
-          this.tokens.refreshToken,
-          this.fetchImpl,
-        );
-        this.tokens = refreshed;
-      } catch {
-        this.tokens = null;
-        const fresh = await this.ensureToken();
-        const retry = await this.performRequest(opts, fresh.accessToken);
-        return parseResponse<T>(retry, opts);
-      }
-      const retry = await this.performRequest(opts, this.tokens.accessToken);
-      return parseResponse<T>(retry, opts);
+    if (res.status === 401) {
+      // Session cookie likely expired — re-authenticate once and retry.
+      this.loggedIn = false;
+      await this.ensureLogin();
+      res = await this.performRequest(opts);
     }
 
     return parseResponse<T>(res, opts);
   }
 
-  private async ensureToken(): Promise<TokenSet> {
-    if (this.tokens && this.tokens.expiresAt > Date.now()) {
-      return this.tokens;
-    }
+  private async ensureLogin(): Promise<void> {
+    if (this.loggedIn) return;
     if (!this.loginInFlight) {
-      this.loginInFlight = loginWithPassword(
-        this.baseUrl,
-        this.email,
-        this.password,
-        this.fetchImpl,
-      ).finally(() => {
-        this.loginInFlight = null;
-      });
+      this.loginInFlight = browserLogin({
+        baseUrl: this.baseUrl,
+        language: this.language,
+        email: this.email,
+        password: this.password,
+        fetch: this.fetchImpl,
+        jar: this.jar,
+      })
+        .then(() => {
+          this.loggedIn = true;
+        })
+        .finally(() => {
+          this.loginInFlight = null;
+        });
     }
-    this.tokens = await this.loginInFlight;
-    return this.tokens;
+    await this.loginInFlight;
   }
 
-  private async performRequest(
-    opts: RequestOptions,
-    accessToken: string,
-  ): Promise<Response> {
+  private async performRequest(opts: RequestOptions): Promise<Response> {
     const url = this.buildUrl(opts.path, opts.query);
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
       Accept: opts.accept ?? FULL_VIEW_ACCEPT,
       ...opts.headers,
     };

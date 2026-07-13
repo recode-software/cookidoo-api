@@ -32,15 +32,17 @@ function makeFetchQueue(responses: Array<Partial<Response> & { json?: unknown }>
   return { fetch: fn as unknown as typeof fetch, calls };
 }
 
-function authResponse() {
-  return {
-    status: 200,
-    json: {
-      access_token: "AT",
-      refresh_token: "RT",
-      expires_in: 3600,
-    },
-  };
+/** Build a client with login short-circuited (cookie session assumed valid). */
+function loggedInClient(fetch: typeof fetch, country = "pl", language = "pl"): CookidooClient {
+  const client = new CookidooClient({
+    email: "u@e.com",
+    password: "pw",
+    country,
+    language,
+    fetch,
+  });
+  (client as unknown as { loggedIn: boolean }).loggedIn = true;
+  return client;
 }
 
 describe("RecipesApi", () => {
@@ -49,17 +51,10 @@ describe("RecipesApi", () => {
 
   beforeEach(() => {
     const q = makeFetchQueue([
-      authResponse(),
       { status: 200, json: { recipeId: "R1", recipeContent: { name: "x", ingredients: [], instructions: [] } } },
     ]);
     calls = q.calls;
-    client = new CookidooClient({
-      email: "u@e.com",
-      password: "pw",
-      country: "pl",
-      language: "pl",
-      fetch: q.fetch,
-    });
+    client = loggedInClient(q.fetch);
   });
 
   afterEach(() => {
@@ -68,10 +63,8 @@ describe("RecipesApi", () => {
 
   it("copyFromPublic uses created-recipes URL (not /recipe/)", async () => {
     await client.recipes.copyFromPublic({ publicId: "01KABC", servingSize: 1 });
-    const apiCall = calls[1];
-    expect(apiCall?.url).toBe(
-      "https://pl.tmmobile.vorwerk-digital.com/created-recipes/pl",
-    );
+    const apiCall = calls[0];
+    expect(apiCall?.url).toBe("https://cookidoo.pl/created-recipes/pl");
     const body = JSON.parse(String(apiCall?.init.body));
     expect(body.recipeUrl).toBe(
       "https://cookidoo.pl/created-recipes/public/recipes/pl/01KABC",
@@ -79,55 +72,51 @@ describe("RecipesApi", () => {
     expect(body.servingSize).toBe(1);
   });
 
-  it("uses full-view Accept header and Bearer token", async () => {
+  it("uses full-view Accept header and cookie auth (no Authorization)", async () => {
     await client.recipes.copyFromPublic({ publicId: "x" });
-    const headers = calls[1]?.init.headers as Record<string, string>;
+    const headers = calls[0]?.init.headers as Record<string, string>;
     expect(headers["Accept"]).toBe(FULL_VIEW_ACCEPT);
-    expect(headers["Authorization"]).toBe("Bearer AT");
+    expect(headers["Authorization"]).toBeUndefined();
     expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("create posts { recipeName } then GETs the full recipe", async () => {
+    const q = makeFetchQueue([
+      { status: 200, json: { recipeId: "R9" } },
+      { status: 200, json: { recipeId: "R9", recipeContent: { name: "n", ingredients: [], instructions: [] } } },
+    ]);
+    const c = loggedInClient(q.fetch);
+    const recipe = await c.recipes.create("Nowy przepis");
+    expect(q.calls[0]?.init.method).toBe("POST");
+    expect(q.calls[0]?.url).toBe("https://cookidoo.pl/created-recipes/pl");
+    expect(JSON.parse(String(q.calls[0]?.init.body))).toEqual({ recipeName: "Nowy przepis" });
+    expect(q.calls[1]?.url).toBe("https://cookidoo.pl/created-recipes/pl/R9");
+    expect(recipe.recipeId).toBe("R9");
   });
 
   it("patchInstructions wraps payload under { instructions }", async () => {
     const q = makeFetchQueue([
-      authResponse(),
       { status: 200, json: { recipeId: "R1", recipeContent: { name: "x", ingredients: [], instructions: [] } } },
     ]);
-    const c = new CookidooClient({
-      email: "u",
-      password: "p",
-      country: "pl",
-      fetch: q.fetch,
-    });
-    await c.recipes.patchInstructions("R1", [
-      { type: "STEP", text: "a" },
-    ]);
-    const call = q.calls[1];
+    const c = loggedInClient(q.fetch);
+    await c.recipes.patchInstructions("R1", [{ type: "STEP", text: "a" }]);
+    const call = q.calls[0];
     expect(call?.init.method).toBe("PATCH");
-    expect(call?.url).toBe(
-      "https://pl.tmmobile.vorwerk-digital.com/created-recipes/pl/R1",
-    );
+    expect(call?.url).toBe("https://cookidoo.pl/created-recipes/pl/R1");
     const body = JSON.parse(String(call?.init.body));
     expect(body).toEqual({ instructions: [{ type: "STEP", text: "a" }] });
   });
 
   it("delete sends DELETE to recipe path", async () => {
-    const q = makeFetchQueue([authResponse(), { status: 204 }]);
-    const c = new CookidooClient({
-      email: "u",
-      password: "p",
-      country: "pl",
-      fetch: q.fetch,
-    });
+    const q = makeFetchQueue([{ status: 204 }]);
+    const c = loggedInClient(q.fetch);
     await c.recipes.delete("R1");
-    expect(q.calls[1]?.init.method).toBe("DELETE");
-    expect(q.calls[1]?.url).toBe(
-      "https://pl.tmmobile.vorwerk-digital.com/created-recipes/pl/R1",
-    );
+    expect(q.calls[0]?.init.method).toBe("DELETE");
+    expect(q.calls[0]?.url).toBe("https://cookidoo.pl/created-recipes/pl/R1");
   });
 
   it("copyFromPublic throws CookidooRateLimitError on 429 when retry:false", async () => {
     const q = makeFetchQueue([
-      authResponse(),
       {
         status: 429,
         json: {
@@ -138,12 +127,7 @@ describe("RecipesApi", () => {
         },
       },
     ]);
-    const c = new CookidooClient({
-      email: "u",
-      password: "p",
-      country: "pl",
-      fetch: q.fetch,
-    });
+    const c = loggedInClient(q.fetch);
     await expect(
       c.recipes.copyFromPublic({ publicId: "X", retry: false }),
     ).rejects.toBeInstanceOf(CookidooRateLimitError);
@@ -152,7 +136,6 @@ describe("RecipesApi", () => {
   it("copyFromPublic auto-retries on 429 with delaysMs", async () => {
     vi.useFakeTimers();
     const q = makeFetchQueue([
-      authResponse(),
       {
         status: 429,
         json: { statusCode: 429, code: "importFailed", message: "nope" },
@@ -165,12 +148,7 @@ describe("RecipesApi", () => {
         },
       },
     ]);
-    const c = new CookidooClient({
-      email: "u",
-      password: "p",
-      country: "pl",
-      fetch: q.fetch,
-    });
+    const c = loggedInClient(q.fetch);
     const onRateLimit = vi.fn();
     const promise = c.recipes.copyFromPublic({
       publicId: "X",

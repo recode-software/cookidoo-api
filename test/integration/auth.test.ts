@@ -12,8 +12,7 @@ describe.skipIf(!hasIntegrationEnv())("auth integration", () => {
       language: env.language,
     });
     await client.login();
-    const tokens = client.getTokens();
-    expect(tokens?.accessToken.length ?? 0).toBeGreaterThan(0);
+    expect(client.isLoggedIn()).toBe(true);
     const list = await client.recipes.list();
     expect(Array.isArray(list)).toBe(true);
   });

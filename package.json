@@ -1,7 +1,7 @@
 {
   "name": "@recode-software/cookidoo-api",
-  "version": "0.1.1",
-  "description": "TypeScript client for the Cookidoo custom-recipes API (Thermomix). Auth, CRUD, typed MODE/INGREDIENT annotation builders, and a Polish step-text parser.",
+  "version": "0.2.0",
+  "description": "TypeScript client for the Cookidoo custom-recipes API (Thermomix). Browser OAuth login, CRUD, typed TTS/INGREDIENT annotation builders, and a Polish step-text parser.",
   "keywords": [
     "cookidoo",
     "thermomix",
@@ -64,5 +64,9 @@
     "dotenv": "^16.4.5",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "fetch-cookie": "^3.2.0",
+    "tough-cookie": "^6.0.2"
   }
 }

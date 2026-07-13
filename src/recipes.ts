@@ -26,11 +26,22 @@ export class RecipesApi {
   }
 
   async list(): Promise<RecipeSummary[]> {
-    const res = await this.client.request<RecipeSummary[] | { data?: RecipeSummary[] }>({
+    const res = await this.client.request<
+      | RecipeSummary[]
+      | { items?: Array<{ recipeId: string; recipeContent?: { name?: string } }>; data?: RecipeSummary[] }
+    >({
       method: "GET",
       path: this.basePath(),
+      accept: "application/json",
     });
     if (Array.isArray(res)) return res;
+    if (res?.items) {
+      return res.items.map((it) => ({
+        ...it,
+        recipeId: it.recipeId,
+        name: it.recipeContent?.name ?? "",
+      }));
+    }
     return res?.data ?? [];
   }
 
@@ -39,6 +50,22 @@ export class RecipesApi {
       method: "GET",
       path: this.recipePath(id),
     });
+  }
+
+  /**
+   * Create a new, blank custom recipe (POST `{ recipeName }`) and return it in
+   * full form. Follow with `patchMeta` / `patchInstructions` to fill content.
+   * Unlike {@link copyFromPublic}, this does not hit the import rate limit and
+   * works even when the source is an official (non-copyable) recipe.
+   */
+  async create(name: string): Promise<Recipe> {
+    const res = await this.client.request<{ recipeId: string }>({
+      method: "POST",
+      path: this.basePath(),
+      body: { recipeName: name },
+      accept: "application/json",
+    });
+    return this.get(res.recipeId);
   }
 
   async copyFromPublic(input: CopyFromPublicInput): Promise<Recipe> {

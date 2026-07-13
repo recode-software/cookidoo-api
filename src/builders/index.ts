@@ -5,5 +5,6 @@ export type {
   WarmUpSpeed,
   SteamingSpeed,
 } from "./mode.js";
+export { tts } from "./tts.js";
 export { ingredient } from "./ingredient.js";
 export { step } from "./step.js";

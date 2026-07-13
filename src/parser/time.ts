@@ -19,6 +19,26 @@ export function firstTimePart(raw: string): string {
   return match ? (match[1] as string) : raw;
 }
 
+/**
+ * Sum a possibly-compound duration string like `"5 min 30 s"` → 330, or
+ * `"10 min"` → 600. For a range (`"4-6 min"`) the first bound is used.
+ * Every `<number><unit>` token is summed using the grammar's time units.
+ */
+export function parseDurationToSeconds(
+  raw: string,
+  grammar: Grammar = grammarPl,
+): number {
+  const re = new RegExp(`(\\d+)(?:[-–]\\d+)?\\s*(${grammar.timeUnitsPattern})`, "gi");
+  let total = 0;
+  let matched = false;
+  for (const m of raw.matchAll(re)) {
+    total += timeToSeconds(m[1] as string, m[2] as string, grammar.timeUnits);
+    matched = true;
+  }
+  if (!matched) throw new Error(`No duration found in: ${raw}`);
+  return total;
+}
+
 export interface SpeedParse {
   speed: string;
   direction: "CW" | "CCW";

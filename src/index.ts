@@ -6,12 +6,17 @@ export {
   CookidooAuthError,
   CookidooRateLimitError,
 } from "./errors.js";
-export type { TokenSet } from "./auth.js";
-export { loginWithPassword, refreshToken } from "./auth.js";
+export {
+  browserLogin,
+  extractRequestId,
+  CIAM_LOGIN_SRV_URL,
+  REQUIRED_AUTH_COOKIES,
+} from "./auth.js";
+export type { BrowserLoginParams } from "./auth.js";
 
 export * from "./types.js";
 
-export { mode, ingredient, step } from "./builders/index.js";
+export { mode, tts, ingredient, step } from "./builders/index.js";
 export type {
   BrowningTemp,
   BlendSpeed,
@@ -21,8 +26,10 @@ export type {
 
 export {
   parseStep,
+  findTtsAnnotations,
   findModeAnnotations,
   findIngredientAnnotations,
+  parseDurationToSeconds,
   grammarPl,
   grammars,
 } from "./parser/index.js";

@@ -41,6 +41,32 @@ export interface ModeAnnotation {
   position: Position;
 }
 
+/**
+ * Time / Temperature / Speed annotation — the generic operation control that
+ * renders as a tappable button on Cookidoo/TM. This is the correct encoding
+ * for a plain "5 min/120°C/obr. 1" run. (The older `MODE`/`name:"manual"`
+ * encoding is saved but rendered struck-through and untappable on custom
+ * recipes.)
+ *
+ * `direction` is present only for reverse blade rotation (`"CCW"`);
+ * clockwise ops omit it. `temperature` is omitted when the step has no
+ * temperature.
+ */
+export interface TtsData {
+  /** Duration in seconds. */
+  time?: number;
+  /** Blade speed, e.g. `"1"`, `"5"`, `"3.5"`. */
+  speed?: string;
+  temperature?: Temperature;
+  direction?: Direction;
+}
+
+export interface TtsAnnotation {
+  type: "TTS";
+  data: TtsData;
+  position: Position;
+}
+
 export interface VolumeAnnotation {
   type: "VOLUME";
   data: {
@@ -65,7 +91,7 @@ export interface IngredientAnnotation {
   position: Position;
 }
 
-export type Annotation = ModeAnnotation | IngredientAnnotation;
+export type Annotation = ModeAnnotation | TtsAnnotation | IngredientAnnotation;
 
 export interface Step {
   type: "STEP";

@@ -1,95 +1,100 @@
 import { describe, expect, it, vi } from "vitest";
-import { loginWithPassword, refreshToken } from "../../src/auth.js";
-import { CookidooAuthError } from "../../src/errors.js";
+import { CookieJar } from "tough-cookie";
+import {
+  browserLogin,
+  CIAM_LOGIN_SRV_URL,
+  extractRequestId,
+} from "../../src/auth.js";
+import { CookidooError, CookidooAuthError } from "../../src/errors.js";
 
-function mockFetch(response: Partial<Response>): typeof fetch {
-  return vi.fn().mockResolvedValue(
-    new Response(response.body as BodyInit, {
-      status: response.status ?? 200,
-      headers: { "Content-Type": "application/json" },
-    }),
-  ) as unknown as typeof fetch;
+const REQUEST_ID = "2f9d8729-4b73-429c-81f0-c25debf11584";
+const LOGIN_HTML = `<form action="/x"><input type="hidden" name="requestId" value="${REQUEST_ID}"></form>`;
+
+function html(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { "Content-Type": "text/html" } });
 }
 
-describe("loginWithPassword", () => {
-  it("POSTs form body to /ciam/auth/token with Basic header", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          access_token: "at",
-          refresh_token: "rt",
-          expires_in: 3600,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-    const tokens = await loginWithPassword(
-      "https://pl.tmmobile.vorwerk-digital.com",
-      "u@e.com",
-      "pw",
-      fetchMock as unknown as typeof fetch,
-    );
-    expect(tokens.accessToken).toBe("at");
-    expect(tokens.refreshToken).toBe("rt");
-    expect(tokens.expiresAt).toBeGreaterThan(Date.now());
+async function authedJar(): Promise<CookieJar> {
+  const jar = new CookieJar();
+  await jar.setCookie("_oauth2_proxy=abc; Path=/", "https://cookidoo.pl");
+  await jar.setCookie("v-authenticated=1; Path=/", "https://cookidoo.pl");
+  return jar;
+}
 
-    const [url, init] = fetchMock.mock.calls[0] as [
-      string,
-      { method: string; headers: Record<string, string>; body: string },
-    ];
-    expect(url).toBe(
-      "https://pl.tmmobile.vorwerk-digital.com/ciam/auth/token",
+describe("extractRequestId", () => {
+  it("reads the hidden requestId field", () => {
+    expect(extractRequestId(LOGIN_HTML)).toBe(REQUEST_ID);
+  });
+
+  it("reads value-before-name ordering", () => {
+    const reordered = `<input value="${REQUEST_ID}" name="requestId">`;
+    expect(extractRequestId(reordered)).toBe(REQUEST_ID);
+  });
+
+  it("throws when absent", () => {
+    expect(() => extractRequestId("<form></form>")).toThrow(CookidooError);
+  });
+});
+
+describe("browserLogin", () => {
+  it("GETs the login page then POSTs requestId + credentials to CIAM", async () => {
+    const jar = await authedJar();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const f = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return calls.length === 1 ? html(LOGIN_HTML) : new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await browserLogin({
+      baseUrl: "https://cookidoo.pl",
+      language: "pl",
+      email: "u@e.com",
+      password: "pw",
+      fetch: f,
+      jar,
+    });
+
+    expect(calls[0]?.url).toBe(
+      "https://cookidoo.pl/profile/pl/login?redirectAfterLogin=%2Ffoundation%2Fpl%2Ffor-you",
     );
-    expect(init.method).toBe("POST");
-    expect(init.headers["Authorization"]).toMatch(/^Basic /);
-    expect(init.headers["Content-Type"]).toBe(
-      "application/x-www-form-urlencoded",
-    );
-    const params = new URLSearchParams(init.body);
-    expect(params.get("grant_type")).toBe("password");
+    expect(calls[1]?.url).toBe(CIAM_LOGIN_SRV_URL);
+    expect(calls[1]?.init?.method).toBe("POST");
+    const params = new URLSearchParams(String(calls[1]?.init?.body));
+    expect(params.get("requestId")).toBe(REQUEST_ID);
     expect(params.get("username")).toBe("u@e.com");
     expect(params.get("password")).toBe("pw");
   });
 
-  it("throws CookidooAuthError on non-2xx", async () => {
-    const fetchMock = mockFetch({
-      status: 401,
-      body: JSON.stringify({ error: "invalid_grant" }),
-    });
+  it("throws CookidooAuthError when auth cookies were not set", async () => {
+    const jar = new CookieJar(); // empty — login did not authenticate
+    const f = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes("/profile/") ? html(LOGIN_HTML) : new Response("", { status: 200 }),
+    ) as unknown as typeof fetch;
+
     await expect(
-      loginWithPassword(
-        "https://pl.tmmobile.vorwerk-digital.com",
-        "u",
-        "p",
-        fetchMock,
-      ),
+      browserLogin({
+        baseUrl: "https://cookidoo.pl",
+        language: "pl",
+        email: "u@e.com",
+        password: "bad",
+        fetch: f,
+        jar,
+      }),
     ).rejects.toBeInstanceOf(CookidooAuthError);
   });
-});
 
-describe("refreshToken", () => {
-  it("sends grant_type=refresh_token", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          access_token: "new",
-          refresh_token: "newrt",
-          expires_in: 3600,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-    await refreshToken(
-      "https://pl.tmmobile.vorwerk-digital.com",
-      "old",
-      fetchMock as unknown as typeof fetch,
-    );
-    const [, init] = fetchMock.mock.calls[0] as [
-      string,
-      { body: string },
-    ];
-    const params = new URLSearchParams(init.body);
-    expect(params.get("grant_type")).toBe("refresh_token");
-    expect(params.get("refresh_token")).toBe("old");
+  it("throws CookidooAuthError when the login page is unreachable", async () => {
+    const jar = await authedJar();
+    const f = vi.fn(async () => html("nope", 503)) as unknown as typeof fetch;
+    await expect(
+      browserLogin({
+        baseUrl: "https://cookidoo.pl",
+        language: "pl",
+        email: "u@e.com",
+        password: "pw",
+        fetch: f,
+        jar,
+      }),
+    ).rejects.toBeInstanceOf(CookidooAuthError);
   });
 });

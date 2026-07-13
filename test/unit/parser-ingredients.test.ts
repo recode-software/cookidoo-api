@@ -41,7 +41,7 @@ describe("findIngredientAnnotations", () => {
 });
 
 describe("parseStep", () => {
-  it("combines modes + ingredients into a sorted Step", () => {
+  it("combines TTS ops + ingredients into a sorted Step", () => {
     const text =
       "Do naczynia włóż jabłko, praż 10 min/100°C/obr. 1. Przełóż.";
     const s = parseStep(text, [
@@ -51,7 +51,7 @@ describe("parseStep", () => {
     expect(s.annotations).toBeDefined();
     const types = s.annotations!.map((a) => a.type);
     expect(types).toContain("INGREDIENT");
-    expect(types).toContain("MODE");
+    expect(types).toContain("TTS");
     const offsets = s.annotations!.map((a) => a.position.offset);
     expect(offsets).toEqual([...offsets].sort((x, y) => x - y));
   });
@@ -62,6 +62,6 @@ describe("parseStep", () => {
       [{ display: "50 g jabłka", stem: "jabłk", amount: 50, unit: "g" }],
       { includeIngredients: false },
     );
-    expect(s.annotations!.every((a) => a.type === "MODE")).toBe(true);
+    expect(s.annotations!.every((a) => a.type === "TTS")).toBe(true);
   });
 });

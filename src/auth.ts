@@ -1,98 +1,97 @@
-import { CookidooAuthError } from "./errors.js";
+import type { CookieJar } from "tough-cookie";
+import { CookidooAuthError, CookidooError } from "./errors.js";
 
-const CLIENT_ID = "kupferwerk-client-nwot";
-const CLIENT_SECRET = "Ls50ON1woySqs1dCdJge";
-const BASIC_AUTH =
-  "Basic " +
-  Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
+/**
+ * CIAM login service that accepts the credential POST during the
+ * browser-style OAuth2/PKCE flow.
+ */
+export const CIAM_LOGIN_SRV_URL =
+  "https://ciam.prod.cookidoo.vorwerk-digital.com/login-srv/login";
 
-export interface TokenSet {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
+/** Cookies the OAuth2 proxy sets once a session is authenticated. */
+export const REQUIRED_AUTH_COOKIES = ["_oauth2_proxy", "v-authenticated"] as const;
+
+function loginPageUrl(baseUrl: string, language: string): string {
+  const redirect = `%2Ffoundation%2F${language}%2Ffor-you`;
+  return `${baseUrl}/profile/${language}/login?redirectAfterLogin=${redirect}`;
 }
 
-interface RawTokenResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in?: number;
-  token_type?: string;
+/**
+ * Extract the `requestId` hidden field from the CIAM login page HTML.
+ * The field position (before/after the value attribute) varies, so we try
+ * both orderings.
+ */
+export function extractRequestId(html: string): string {
+  const match =
+    /<input[^>]*name=["']requestId["'][^>]*value=["']([^"']+)["']/i.exec(html) ??
+    /<input[^>]*value=["']([0-9a-f-]{36})["'][^>]*name=["']requestId["']/i.exec(
+      html,
+    );
+  if (!match) {
+    throw new CookidooError({
+      message:
+        "Login flow failed: could not extract requestId from the login page.",
+      status: 0,
+      body: html.slice(0, 500),
+      url: "login-page",
+      method: "GET",
+    });
+  }
+  return match[1] as string;
 }
 
-function toTokenSet(raw: RawTokenResponse): TokenSet {
-  const ttl = typeof raw.expires_in === "number" ? raw.expires_in : 3600;
-  return {
-    accessToken: raw.access_token,
-    refreshToken: raw.refresh_token,
-    expiresAt: Date.now() + ttl * 1000 - 30_000,
-  };
+export interface BrowserLoginParams {
+  baseUrl: string;
+  language: string;
+  email: string;
+  password: string;
+  /** A cookie-persisting fetch (e.g. from `fetch-cookie`). */
+  fetch: typeof fetch;
+  /** The jar backing `fetch`, inspected to confirm auth cookies were set. */
+  jar: CookieJar;
 }
 
-export function tokenUrl(baseUrl: string): string {
-  return `${baseUrl}/ciam/auth/token`;
-}
+/**
+ * Perform the browser-based OAuth2 login, mirroring the Cookidoo web app:
+ *
+ * 1. GET `cookidoo.{tld}/profile/{lang}/login` — follows the redirect chain
+ *    through OAuth2/PKCE to the CIAM login page.
+ * 2. Extract `requestId` from the login form.
+ * 3. POST credentials to the CIAM login service, following callback redirects.
+ * 4. Confirm the session cookie jar now holds the auth cookies.
+ *
+ * On success the shared cookie jar authenticates every subsequent API call —
+ * there is no bearer token to manage.
+ */
+export async function browserLogin(params: BrowserLoginParams): Promise<void> {
+  const { baseUrl, language, email, password, fetch: f, jar } = params;
 
-async function postToken(
-  url: string,
-  body: URLSearchParams,
-  fetchImpl: typeof fetch,
-): Promise<TokenSet> {
-  const res = await fetchImpl(url, {
+  const pageRes = await f(loginPageUrl(baseUrl, language));
+  if (!pageRes.ok) {
+    throw new CookidooAuthError({
+      status: pageRes.status,
+      body: `could not reach login page`,
+      url: loginPageUrl(baseUrl, language),
+      method: "GET",
+    });
+  }
+  const requestId = extractRequestId(await pageRes.text());
+
+  const body = new URLSearchParams({ requestId, username: email, password });
+  await f(CIAM_LOGIN_SRV_URL, {
     method: "POST",
-    headers: {
-      Authorization: BASIC_AUTH,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
 
-  const text = await res.text();
-  const parsed = safeJson(text);
-
-  if (!res.ok) {
+  const cookies = await jar.getCookies(baseUrl);
+  const names = new Set(cookies.map((c) => c.key));
+  if (!REQUIRED_AUTH_COOKIES.every((name) => names.has(name))) {
     throw new CookidooAuthError({
-      status: res.status,
-      body: parsed ?? text,
-      url,
+      status: 401,
+      body: "authentication cookies were not set — check email and password",
+      url: CIAM_LOGIN_SRV_URL,
       method: "POST",
     });
-  }
-
-  return toTokenSet(parsed as RawTokenResponse);
-}
-
-export function loginWithPassword(
-  baseUrl: string,
-  email: string,
-  password: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<TokenSet> {
-  const body = new URLSearchParams({
-    grant_type: "password",
-    username: email,
-    password,
-  });
-  return postToken(tokenUrl(baseUrl), body, fetchImpl);
-}
-
-export function refreshToken(
-  baseUrl: string,
-  token: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<TokenSet> {
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: token,
-  });
-  return postToken(tokenUrl(baseUrl), body, fetchImpl);
-}
-
-function safeJson(text: string): unknown {
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
   }
 }

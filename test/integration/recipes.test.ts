@@ -2,9 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   CookidooClient,
   ingredient,
-  mode,
   parseStep,
   step,
+  tts,
   type Recipe,
 } from "../../src/index.js";
 import { safeDelete, sweepTestRecipes } from "../helpers/cleanup.js";
@@ -39,27 +39,19 @@ describe.skipIf(!runIntegration)("RecipesApi integration", () => {
     await sweepTestRecipes(client);
   });
 
-  it("copies a public recipe and returns a new ULID recipeId", async () => {
-    const env = integrationEnv()!;
-    const recipe = await client.recipes.copyFromPublic({
-      publicId: env.publicRecipeId,
-      servingSize: 1,
-    });
+  it("creates a blank recipe and returns a new ULID recipeId", async () => {
+    const recipe = await client.recipes.create(testRecipeName("create"));
     created.push(recipe.recipeId);
     expect(recipe.recipeId).toMatch(/^01[0-9A-HJKMNP-TV-Z]+$/);
     expect(recipe.recipeContent.name).toBeTypeOf("string");
   });
 
   it(
-    "full cycle: copy → patch meta → patch instructions → GET verifies annotations",
+    "full cycle: create → patch meta → patch instructions → GET verifies TTS annotations",
     async () => {
-      const env = integrationEnv()!;
       const name = testRecipeName("full-cycle");
 
-      const initial = await client.recipes.copyFromPublic({
-        publicId: env.publicRecipeId,
-        servingSize: 1,
-      });
+      const initial = await client.recipes.create(name);
       created.push(initial.recipeId);
 
       await client.recipes.patchMeta(initial.recipeId, {
@@ -78,8 +70,8 @@ describe.skipIf(!runIntegration)("RecipesApi integration", () => {
       const parsed = parseStep(stepText, [
         { display: "50 g jabłka", stem: "jabłk", amount: 50, unit: "g" },
       ]);
-      const steamStep = step("Gotuj 15 min/Varoma/obr. 1.", [
-        mode.steaming({ offset: 6, length: 20, time: 900, speed: "1" }),
+      const ttsStep = step("Podgrzej 15 min/90°C/obr. wsteczne 1.", [
+        tts({ offset: 9, length: 26, time: 900, temperature: 90, speed: "1", direction: "CCW" }),
       ]);
       const simpleStep = step("Podawaj z jabłkiem.", [
         ingredient.simple({
@@ -91,7 +83,7 @@ describe.skipIf(!runIntegration)("RecipesApi integration", () => {
 
       await client.recipes.patchInstructions(initial.recipeId, [
         parsed,
-        steamStep,
+        ttsStep,
         simpleStep,
       ]);
 
@@ -100,11 +92,8 @@ describe.skipIf(!runIntegration)("RecipesApi integration", () => {
       expect(fetched.recipeContent.instructions).toHaveLength(3);
       const firstStep = fetched.recipeContent.instructions[0];
       expect(firstStep?.type).toBe("STEP");
-      expect(firstStep?.annotations?.length ?? 0).toBeGreaterThan(0);
-      const hasBrowning = firstStep?.annotations?.some(
-        (a) => a.type === "MODE" && a.name === "browning",
-      );
-      expect(hasBrowning).toBe(true);
+      const hasTts = firstStep?.annotations?.some((a) => a.type === "TTS");
+      expect(hasTts).toBe(true);
     },
     60_000,
   );
