@@ -25,7 +25,12 @@ export function findIngredientAnnotations(
   const used: Array<[number, number]> = [];
 
   for (const ing of ingredients) {
-    const pattern = new RegExp(`\\b${escapeRegex(ing.stem)}\\w*`, "iu");
+    // `\b` and `\w` are ASCII-only in JS, so they break on stems that start or
+    // end with letters like ś, ą, ę, ł. Use Unicode-aware boundaries instead.
+    const pattern = new RegExp(
+      `(?<![\\p{L}\\p{N}_])${escapeRegex(ing.stem)}[\\p{L}\\p{N}_]*`,
+      "iu",
+    );
     const match = pattern.exec(text);
     if (!match) continue;
     const start = match.index;

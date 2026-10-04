@@ -220,6 +220,13 @@ await client.recipes.copyFromPublic({ publicId, retry: false });
   untappable on custom recipes; the correct encoding for a plain
   "time/temp/speed" run is a `TTS` annotation (verified against a live
   account). `parseStep` emits `TTS` by default.
+- **`mode.dough()` works on custom recipes (TM6, verified on `cookidoo.pl`).**
+  Only `name: "manual"` is unsupported. A dough-mode chip saved by the Cookidoo
+  editor is `{ type: "MODE", name: "dough", data: { time: 180 } }`. Note that
+  `mode.dough()` returns just the annotation: you must put the chip's label
+  into the step text yourself and pass its `offset`/`length` (the editor
+  inserts the Polish UI label, e.g. `Ciasto /3 min`; labels in other locales
+  are unverified).
 - **Varoma via `TTS` carries no `temperature`.** `parseStep` matches a
   `Varoma` step so the time/speed button still renders, but does not emit a
   `temperature` field (the exact Varoma-on-custom-recipe encoding is
