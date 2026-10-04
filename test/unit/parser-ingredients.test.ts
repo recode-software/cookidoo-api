@@ -23,6 +23,32 @@ describe("findIngredientAnnotations", () => {
     });
   });
 
+  it("matches stems that start with a non-ASCII letter (ś, ł, ż…)", () => {
+    const text = "Dodaj śmietanę i żurawinę.";
+    const anns = findIngredientAnnotations(text, [
+      { display: "60 g śmietany", stem: "śmietan", amount: 60, unit: "g" },
+      { display: "20 g żurawiny", stem: "żurawin", amount: 20, unit: "g" },
+    ]);
+    expect(anns).toHaveLength(2);
+    expect(anns[0]?.position.offset).toBe(text.indexOf("śmietan"));
+    expect(anns[1]?.position.offset).toBe(text.indexOf("żurawin"));
+  });
+
+  it("covers the whole inflected word when it ends with a non-ASCII letter", () => {
+    const text = "Dodaj mąkę.";
+    const [ann] = findIngredientAnnotations(text, [
+      { display: "270 g mąki", stem: "mąk", amount: 270, unit: "g" },
+    ]);
+    expect(ann?.position.length).toBe("mąkę".length);
+  });
+
+  it("does not match a stem in the middle of a word", () => {
+    const anns = findIngredientAnnotations("Dodaj kamąkę.", [
+      { display: "270 g mąki", stem: "mąk", amount: 270, unit: "g" },
+    ]);
+    expect(anns).toHaveLength(0);
+  });
+
   it("skips overlapping subsequent matches (same stem)", () => {
     const text = "jabłko i jabłka";
     const anns = findIngredientAnnotations(text, [
